@@ -13,7 +13,8 @@ of frames.
 
 ```
 @125 kbit/s, 10 ms interval:  TX=580460 RX=580460 bad=0
-@1 Mbit/s,   1 ms  interval:  TX=14001  RX=14000  bad=0
+@1 Mbit/s, TX=7222001 RX=7221966 bad=0
+
 ```
 
 ---
