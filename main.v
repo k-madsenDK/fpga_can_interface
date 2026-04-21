@@ -1,4 +1,4 @@
-// main.v — production: CAN slave 0x123 → 0x124
+// main.v — CAN slave 0x123 → 0x124 @ 1 Mbit/s
 
 module main (
     input  wire       clk,
@@ -27,7 +27,14 @@ module main (
     wire [63:0] tx_data;
     wire        tx_busy;
 
-    can_slave #(.SYS_CLK_HZ(100_000_000), .BITRATE(125_000)) u_slave (
+    // 1 Mbit/s timing: TQ_PER_BIT=10, SAMPLE_TQ=8 (80% sample)
+    // CLKS_PER_TQ = 100M / (1M * 10) = 10 eksakt
+    can_slave #(
+        .SYS_CLK_HZ(100_000_000),
+        .BITRATE(1_000_000),
+        .TQ_PER_BIT(10),
+        .SAMPLE_TQ(8)
+    ) u_slave (
         .clk(clk), .rst(rst),
         .can_rx(can_rx), .can_tx(can_tx),
         .rx_valid(rx_valid), .rx_id(rx_id),
