@@ -1,6 +1,6 @@
 # FPGA CAN Interface
 
-#remark this is only working with oss-cad-suite 20251214 fails with latest version :-(
+#remark this is only working with oss-cad-suite 20251214 timming fails with latest version :-(
 
 A bit-accurate, from-scratch **CAN 2.0A controller** implemented in Verilog for
 Lattice iCE40 FPGAs (Alchitry Cu and compatible boards).
