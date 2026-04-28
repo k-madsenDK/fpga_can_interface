@@ -42,10 +42,11 @@ module rx_frame_fsm (
     reg [63:0] data_sr;
     reg [14:0] crc_sr;
     reg [14:0] crc_at_crc_start;
+    
+    // OPTIMERING: Gemmer det beregnede antal data bits.
+    reg [6:0]  target_data_bits;
 
     assign crc_bit_in = bit_in;
-
-    wire [6:0] data_bits_needed = (dlc_sr >= 4'd8) ? 7'd64 : {dlc_sr, 3'b000};
 
     always @(posedge clk) begin
         // Pulser nulstilles hver cycle
@@ -55,17 +56,18 @@ module rx_frame_fsm (
         ack_request   <= 1'b0;      // ack_request er 1-cycle puls
 
         if (rst) begin
-            state         <= S_IDLE;
-            bit_counter   <= 7'd0;
-            stuff_enable  <= 1'b0;
-            id_sr         <= 11'd0;
-            dlc_sr        <= 4'd0;
-            data_sr       <= 64'd0;
-            crc_sr        <= 15'd0;
+            state            <= S_IDLE;
+            bit_counter      <= 7'd0;
+            stuff_enable     <= 1'b0;
+            id_sr            <= 11'd0;
+            dlc_sr           <= 4'd0;
+            data_sr          <= 64'd0;
+            crc_sr           <= 15'd0;
             crc_at_crc_start <= 15'd0;
-            rx_id         <= 11'd0;
-            rx_dlc        <= 4'd0;
-            rx_data       <= 64'd0;
+            rx_id            <= 11'd0;
+            rx_dlc           <= 4'd0;
+            rx_data          <= 64'd0;
+            target_data_bits <= 7'd0;
 
         end else if (stuff_error && state != S_IDLE) begin
             state        <= S_ERROR;
@@ -110,13 +112,24 @@ module rx_frame_fsm (
             S_DLC: begin
                 dlc_sr        <= {dlc_sr[2:0], bit_in};
                 crc_bit_valid <= 1'b1;
+                
                 if (bit_counter == 7'd3) begin
                     bit_counter <= 7'd0;
                     data_sr     <= 64'd0;
-                    if ({dlc_sr[2:0], bit_in} == 4'd0)
+                    
+                    // OPTIMERING: Vi bygger det foreløbige DLC for at præ-beregne target bits.
+                    // Subtraktion (-1) laves her én gang, så S_DATA kun kræver '=='.
+                    // Vi håndterer særtilfældet DLC=0 for at undgå underflow af 7-bit registeret.
+                    if ({dlc_sr[2:0], bit_in} == 4'd0) begin
                         state <= S_CRC;
-                    else
+                        target_data_bits <= 7'd0;
+                    end else begin
                         state <= S_DATA;
+                        if ({dlc_sr[2:0], bit_in} >= 4'd8)
+                            target_data_bits <= 7'd63; // 64 bits - 1
+                        else
+                            target_data_bits <= {{dlc_sr[2:0], bit_in}, 3'b000} - 7'd1;
+                    end
                 end else begin
                     bit_counter <= bit_counter + 1'b1;
                 end
@@ -125,7 +138,9 @@ module rx_frame_fsm (
             S_DATA: begin
                 data_sr       <= {data_sr[62:0], bit_in};
                 crc_bit_valid <= 1'b1;
-                if (bit_counter == data_bits_needed - 1) begin
+                
+                // OPTIMERING: Den lange logikkæde er erstattet med et simpelt register-match.
+                if (bit_counter == target_data_bits) begin
                     state       <= S_CRC;
                     bit_counter <= 7'd0;
                     crc_sr      <= 15'd0;
