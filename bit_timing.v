@@ -8,7 +8,7 @@
 //   1 M      10           8         10
 //
 // sample_pulse fyrer ved SAMPLE_TQ; tx_pulse ved start af bit.
-// Hard-sync på recessive→dominant flanker (men ikke når vi selv sender).
+// Hard-sync på recessive->dominant flanker (men ikke når vi selv sender).
 
 module bit_timing #(
     parameter SYS_CLK_HZ = 100_000_000,
@@ -29,12 +29,18 @@ module bit_timing #(
     localparam integer TQ_CTR_W    = $clog2(CLKS_PER_TQ + 1);
     localparam integer BIT_CTR_W   = $clog2(TQ_PER_BIT + 1);
 
-    // Compile-time check: timing skal gå op eksakt
+    // OPTIMERING 1: Tvinger konstanter til eksakt bitbredde.
+    // Dette undgår 32-bit padding i Yosys/Vivado og sparer direkte LUTs.
+    localparam [TQ_CTR_W-1:0]  MAX_TQ   = CLKS_PER_TQ - 1;
+    localparam [BIT_CTR_W-1:0] MAX_BIT  = TQ_PER_BIT - 1;
+    localparam [BIT_CTR_W-1:0] SMPL_BIT = SAMPLE_TQ - 1;
+    localparam [TQ_CTR_W-1:0]  SYNC_WIN = CLKS_PER_TQ / 4;
+
+    // Compile-time check
     initial begin
         if (SYS_CLK_HZ != CLKS_PER_TQ * BITRATE * TQ_PER_BIT) begin
-            $display("ERROR bit_timing: inexact. SYS_CLK=%0d BITRATE=%0d TQ_PER_BIT=%0d CLKS_PER_TQ=%0d actual_rate=%0d",
-                     SYS_CLK_HZ, BITRATE, TQ_PER_BIT, CLKS_PER_TQ,
-                     SYS_CLK_HZ / (CLKS_PER_TQ * TQ_PER_BIT));
+            $display("ERROR bit_timing: inexact. SYS_CLK=%0d BITRATE=%0d TQ_PER_BIT=%0d CLKS_PER_TQ=%0d",
+                     SYS_CLK_HZ, BITRATE, TQ_PER_BIT, CLKS_PER_TQ);
             $finish;
         end
         if (SAMPLE_TQ >= TQ_PER_BIT) begin
@@ -48,8 +54,13 @@ module bit_timing #(
     reg [BIT_CTR_W-1:0] bit_counter;
     reg rx_prev;
 
-    wire falling_edge = rx_prev & ~rx_bit;
-    wire near_start   = (bit_counter == 0) && (tq_counter < CLKS_PER_TQ/4);
+    // OPTIMERING 2 & 3: Flad kombinationslogik med De Morgan / Reduction OR
+    // Original: falling_edge && !((bit_counter == 0) && (tq_counter < SYNC_WIN))
+    // (bit_counter != 0) implementeres som en lynhurtig 1-LUT "reduction OR" (|bit_counter)
+    wire allow_sync = (|bit_counter) | (tq_counter >= SYNC_WIN);
+    wire do_sync    = (rx_prev & ~rx_bit) & ~tx_active & allow_sync;
+    
+    wire tq_tick    = (tq_counter == MAX_TQ);
 
     always @(posedge clk) begin
         sample_pulse <= 1'b0;
@@ -63,26 +74,26 @@ module bit_timing #(
         end else begin
             rx_prev <= rx_bit;
 
-            if (falling_edge && !near_start && !tx_active) begin
-                // Hard-sync til flanke (kun når vi IKKE selv sender)
+            if (do_sync) begin
+                // Hard-sync til flanke
                 tq_counter  <= 0;
                 bit_counter <= 0;
-            end else begin
-                if (tq_counter == CLKS_PER_TQ - 1) begin
-                    tq_counter <= 0;
-                    if (bit_counter == TQ_PER_BIT - 1) begin
-                        bit_counter <= 0;
-                        tx_pulse    <= 1'b1;
-                    end else begin
-                        bit_counter <= bit_counter + 1'b1;
-                    end
-                    if (bit_counter == SAMPLE_TQ - 1) begin
-                        sample_pulse <= 1'b1;
-                        rx_sample    <= rx_bit;
-                    end
+            end else if (tq_tick) begin
+                tq_counter <= 0;
+                
+                if (bit_counter == MAX_BIT) begin
+                    bit_counter <= 0;
+                    tx_pulse    <= 1'b1;
                 end else begin
-                    tq_counter <= tq_counter + 1'b1;
+                    bit_counter <= bit_counter + 1'b1;
                 end
+                
+                if (bit_counter == SMPL_BIT) begin
+                    sample_pulse <= 1'b1;
+                    rx_sample    <= rx_bit;
+                end
+            end else begin
+                tq_counter <= tq_counter + 1'b1;
             end
         end
     end
