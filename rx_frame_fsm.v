@@ -1,4 +1,4 @@
-// rx_frame_fsm.v — CAN frame parser state machine
+// rx_frame_fsm.v — CAN frame parser state machine (ULTRA OPTIMERET)
 // ack_request er nu 1-cycle puls ved start af ACK-slot (handshake til ack_driver)
 
 module rx_frame_fsm (
@@ -43,7 +43,6 @@ module rx_frame_fsm (
     reg [14:0] crc_sr;
     reg [14:0] crc_at_crc_start;
     
-    // OPTIMERING: Gemmer det beregnede antal data bits.
     reg [6:0]  target_data_bits;
 
     assign crc_bit_in = bit_in;
@@ -53,7 +52,7 @@ module rx_frame_fsm (
         rx_valid      <= 1'b0;
         crc_init      <= 1'b0;
         crc_bit_valid <= 1'b0;
-        ack_request   <= 1'b0;      // ack_request er 1-cycle puls
+        ack_request   <= 1'b0;      
 
         if (rst) begin
             state            <= S_IDLE;
@@ -117,19 +116,28 @@ module rx_frame_fsm (
                     bit_counter <= 7'd0;
                     data_sr     <= 64'd0;
                     
-                    // OPTIMERING: Vi bygger det foreløbige DLC for at præ-beregne target bits.
-                    // Subtraktion (-1) laves her én gang, så S_DATA kun kræver '=='.
-                    // Vi håndterer særtilfældet DLC=0 for at undgå underflow af 7-bit registeret.
-                    if ({dlc_sr[2:0], bit_in} == 4'd0) begin
+                    // --- EXTREME HARDWARE OPTIMIZATION START ---
+                    // Den 4-bit DLC værdi er bygget af {dlc_sr[2], dlc_sr[1], dlc_sr[0], bit_in}.
+                    // Vi bruger en NOR-operation til at tjekke for NUL (meget hurtig i en LUT4).
+                    if (~(dlc_sr[2] | dlc_sr[1] | dlc_sr[0] | bit_in)) begin
                         state <= S_CRC;
                         target_data_bits <= 7'd0;
                     end else begin
                         state <= S_DATA;
-                        if ({dlc_sr[2:0], bit_in} >= 4'd8)
+                        
+                        // Bit 3 i vores DLC-værdi svarer til 'dlc_sr[2]'. 
+                        // Hvis den er høj, er tallet >= 8. (Ingen comparator nødvendig!)
+                        if (dlc_sr[2]) begin
                             target_data_bits <= 7'd63; // 64 bits - 1
-                        else
-                            target_data_bits <= {{dlc_sr[2:0], bit_in}, 3'b000} - 7'd1;
+                        end else begin
+                            // Matematik-trick: (DLC * 8) - 1
+                            // I stedet for at trække 1 fra et 7-bit tal, trækker vi 1 fra 
+                            // vores lille 4-bit DLC og tilføjer '111' til de tomme pladser.
+                            target_data_bits <= { ({1'b0, dlc_sr[1:0], bit_in} - 4'd1), 3'b111 };
+                        end
                     end
+                    // --- EXTREME HARDWARE OPTIMIZATION END ---
+                    
                 end else begin
                     bit_counter <= bit_counter + 1'b1;
                 end
@@ -139,7 +147,6 @@ module rx_frame_fsm (
                 data_sr       <= {data_sr[62:0], bit_in};
                 crc_bit_valid <= 1'b1;
                 
-                // OPTIMERING: Den lange logikkæde er erstattet med et simpelt register-match.
                 if (bit_counter == target_data_bits) begin
                     state       <= S_CRC;
                     bit_counter <= 7'd0;
@@ -168,13 +175,12 @@ module rx_frame_fsm (
                 end else if (crc_sr != crc_at_crc_start) begin
                     state <= S_ERROR;
                 end else begin
-                    ack_request <= 1'b1;   // 1-cycle puls — ack_driver tager over
+                    ack_request <= 1'b1;   
                     state       <= S_ACK;
                 end
             end
 
             S_ACK: begin
-                // Ingen validering her — ack_driver håndterer bussen
                 state <= S_ACK_DEL;
             end
 
