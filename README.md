@@ -1,7 +1,9 @@
 # FPGA CAN Interface
 
 #remark this is only working with oss-cad-suite 20251214 timming fails with latest version :-(
+
 rx_frame_fsm.v is updatet so it now run on more oss-cad-suites builds.
+crc15.v is optimized.
 
 A bit-accurate, from-scratch **CAN 2.0A controller** implemented in Verilog for
 Lattice iCE40 FPGAs (Alchitry Cu and compatible boards).
